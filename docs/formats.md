@@ -203,7 +203,9 @@ bitstream codes edge flags for every 8-pixel column of whole macroblocks
 width rounded up to 16 pixels, two columns short; every bit after is read
 from the wrong place. Counting by whole macroblocks, and taking the stored
 picture as whole macroblocks across for deblocking, decodes all 515 cleanly
-(movie #110, 479 frames, checked frame by frame).
+(movie #110, 479 frames, checked frame by frame). The FFmpeg the releases
+carry ([vice-lens-ffmpeg](https://github.com/Librett0/vice-lens-ffmpeg))
+has this fix.
 
 ## The map
 

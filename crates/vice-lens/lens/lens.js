@@ -3625,7 +3625,7 @@ async function openSetup() {
     note.replaceChildren(h('div', { class: 'note ' + (r.ok ? 'ok' : 'bad'), text: r.ok ? 'Saved. Restart Vice Lens to read from the new folder.' : r.error }));
   };
   const browse = (what) => window.ipc ? h('button', { class: 'btn', onclick: () => window.ipc.postMessage(`pick-${what === 'ffmpeg' ? 'file' : 'folder'}:${what}`) }, icon('folder'), 'Browse…') : null;
-  const ff = h('input', { class: 'text plain', placeholder: 'ffmpeg (from the PATH)', spellcheck: 'false' });
+  const ff = h('input', { class: 'text plain', placeholder: 'ffmpeg (next to Vice Lens, else from the PATH)', spellcheck: 'false' });
   const ffNote = h('div');
   const ffShow = (r) => ffNote.replaceChildren(h('div', { class: 'note ' + (r.bink2 ? 'ok' : 'bad'), text: r.bink2 ? `Plays Bink 2: ${r.ffmpeg}` : r.ffmpeg ? `${r.ffmpeg} does not decode Bink 2; movies will not play.` : 'No FFmpeg found; movies will not play.' }));
   // How the app window draws (Linux only: WebKitGTK's GPU or shared-memory path).

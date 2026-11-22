@@ -23,8 +23,10 @@ through (Vulkan, through wgpu).
 
 Download Vice Lens for Linux or Windows from the releases, unpack it and run
 `vice-lens` (on Linux it needs WebKitGTK 4.1, present on most desktops, and
-a Vulkan driver for the 3D world). In **Setup**, choose your game folder
-(the one that holds `levels.rpf`, `data.rpf`, `textures.rpf`, ...) and press
+a Vulkan driver for the 3D world). Everything it needs comes in the
+archive, the FFmpeg that plays the game's Bink 2 movies included. In
+**Setup**, choose your game folder (the one that holds `levels.rpf`,
+`data.rpf`, `textures.rpf`, ...) and press
 **Build missing caches**: Vice Lens reads the map, the placements and the
 model index from your copy once (about an hour on a fast disk; about 2 GB),
 and you can explore while it works.
@@ -88,14 +90,16 @@ TSV, sounds as Opus, textures as PNG. `Ctrl Shift F` shows the frame rate.
   phone clips are portrait), sound and length. A movie converts to MP4 as it
   opens (progress on its poster; once, a few seconds) and plays with a
   player's keys: Space, arrows and J/L to seek, `,` `.` a frame, `[` `]`
-  speed, O loop, F full screen, N/P the next or previous movie. 196 hold sound tracks (Bink Audio 2; a movie with several
-  lets you switch between them while it plays), 16 of them only silence;
-  the other 319, mostly short screen loops, hold none. The phone-shaped
-  clips (720×1280) need a Bink 2 decoder with the fix described in
-  [docs/formats.md](docs/formats.md#movies-moviesrpf); with today's they
-  play with a damaged picture, or as sound alone, and say so.
-  This needs an FFmpeg with the `bink2video` decoder and the `binka`
-  demuxer (stock builds lack the first; set its path in Setup).
+  speed, O loop, F full screen, N/P the next or previous movie. 196 hold
+  sound tracks (Bink Audio 2; a movie with several lets you switch between
+  them while it plays), 16 of them only silence; the other 319, mostly
+  short screen loops, hold none. Movies play through an FFmpeg with a Bink
+  2 decoder, which stock FFmpeg lacks: the releases carry one next to Vice
+  Lens ([vice-lens-ffmpeg](https://github.com/Librett0/vice-lens-ffmpeg)),
+  with the fix the phone-shaped clips (720×1280) need
+  ([docs/formats.md](docs/formats.md#movies-moviesrpf)). Vice Lens looks
+  for `ffmpeg` next to itself, then on the PATH; Setup can name another,
+  which needs the `bink2video` decoder and the `binka` demuxer.
 - **Sound**: the sound banks of `audio.rpf`; effects and speech play straight
   from the data (Opus, wrapped in Ogg without re-encoding) and save as
   `.opus`. Music banks are listed but do not play yet.
@@ -234,3 +238,10 @@ caches and captures Vice Lens makes from your copy stay on your machine.
 ## Licence
 
 MIT; see [LICENSE](LICENSE).
+
+The release archives also carry `ffmpeg`, a separate program that Vice Lens
+runs to play movies and shares no code with. It is under the GNU Affero
+General Public License 3.0 or later (`FFMPEG-LICENSE.txt` beside it), and
+its complete source, with the script that builds it, is
+[Librett0/vice-lens-ffmpeg](https://github.com/Librett0/vice-lens-ffmpeg)
+(`FFMPEG-SOURCE.txt` names the commit).

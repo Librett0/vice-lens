@@ -91,15 +91,19 @@ impl Lens {
 
     // --- settings ---
 
-    /// The FFmpeg Vice Lens uses: the one chosen in Setup, else `ffmpeg` on
+    /// The FFmpeg Vice Lens uses: the one chosen in Setup, else the one its
+    /// releases carry next to it (with a Bink 2 decoder), else `ffmpeg` on
     /// the PATH; and whether it decodes Bink 2 (stock builds do not).
     pub(super) fn ffmpeg(&self) -> (Option<PathBuf>, bool) {
         let mut cached = self.ffmpeg.lock().unwrap();
         if let Some(c) = cached.as_ref() {
             return c.clone();
         }
+        let name = format!("ffmpeg{}", std::env::consts::EXE_SUFFIX);
         let chosen = std::fs::read_to_string(config("ffmpeg")).ok().map(|s| PathBuf::from(s.trim())).filter(|p| p.exists());
-        let path = chosen.or_else(|| std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join("ffmpeg")).find(|f| f.exists())));
+        let beside = || std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(&name))).filter(|p| p.exists());
+        let on_path = || std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(&name)).find(|f| f.exists()));
+        let path = chosen.or_else(beside).or_else(on_path);
         let bink2 = path.as_ref().is_some_and(|p| std::process::Command::new(p).args(["-hide_banner", "-decoders"]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("bink2video")));
         *cached = Some((path.clone(), bink2));
         (path, bink2)

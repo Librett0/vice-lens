@@ -1,6 +1,8 @@
-# Builds Vice Lens for Linux and
-# Windows when a version tag is pushed, and attaches the archives to the
-# release. No game data is involved.
+# Builds Vice Lens for Linux and Windows when a version tag is pushed, and
+# attaches the archives to the release, each with the FFmpeg that plays the
+# game's Bink 2 movies (built in Librett0/vice-lens-ffmpeg, AGPL-3.0-or-later,
+# and shipped beside Vice Lens as a separate program). No game data is
+# involved.
 name: release
 on:
   push:
@@ -8,6 +10,8 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+env:
+  FFMPEG: vl-1
 jobs:
   build:
     strategy:
@@ -20,17 +24,27 @@ jobs:
             target: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libxdo-dev
       - run: cargo build --release -p vice-lens
+      - name: FFmpeg with Bink 2
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$FFMPEG" -R Librett0/vice-lens-ffmpeg -p "ffmpeg-${{ matrix.target }}.*" -D ffmpeg
       - if: runner.os == 'Linux'
         run: |
           d=vice-lens-${{ matrix.target }}
           mkdir -p $d
           cp target/release/vice-lens $d/
           cp packaging/vice-lens.desktop packaging/vice-lens.svg README.md LICENSE docs/caches.md $d/
+          tar xzf ffmpeg/ffmpeg-${{ matrix.target }}.tar.gz -C ffmpeg
+          cp ffmpeg/ffmpeg $d/
+          cp ffmpeg/LICENSE.txt $d/FFMPEG-LICENSE.txt
+          cp ffmpeg/SOURCE.txt $d/FFMPEG-SOURCE.txt
+          $d/ffmpeg -hide_banner -decoders | grep -q bink2video
           tar czf $d.tar.gz $d
       - if: runner.os == 'Windows'
         shell: pwsh
@@ -39,6 +53,11 @@ jobs:
           New-Item -ItemType Directory $d | Out-Null
           Copy-Item target/release/vice-lens.exe $d/
           Copy-Item README.md, LICENSE, docs/caches.md $d/
+          Expand-Archive "ffmpeg/ffmpeg-${{ matrix.target }}.zip" ffmpeg
+          Copy-Item ffmpeg/ffmpeg.exe $d/
+          Copy-Item ffmpeg/LICENSE.txt $d/FFMPEG-LICENSE.txt
+          Copy-Item ffmpeg/SOURCE.txt $d/FFMPEG-SOURCE.txt
+          if (-not (& "$d/ffmpeg.exe" -hide_banner -decoders | Select-String bink2video)) { throw "ffmpeg.exe has no Bink 2 decoder" }
           Compress-Archive $d "$d.zip"
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
