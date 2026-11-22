@@ -67,7 +67,7 @@ jobs:
           & $ff -v error -i "$game\movie.mp4" -i "$game\track.m4a" -map 0:v:0 -map 1:a:0 -c copy -movflags +faststart -y "$game\movie-a0.mp4"
           & $ff -v error -i "$game\movie-vp9.webm" -i "$game\track.webm" -map 0:v:0 -map 1:a:0 -c copy -y "$game\movie-vp9-a0.webm"
           foreach ($f in 'movie-a0.mp4', 'movie-vp9-a0.webm') {
-            $info = (& $ff -hide_banner -i "$game\$f" 2>&1) -join "`n"
+            $info = (& $ff -hide_banner -i "$game\$f" -map 0 -c copy -f null - 2>&1) -join "`n"
             Check ($info -match 'Video:' -and $info -match 'Audio:') "$f holds a picture and a sound track"
           }
 
