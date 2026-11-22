@@ -97,9 +97,13 @@ TSV, sounds as Opus, textures as PNG. `Ctrl Shift F` shows the frame rate.
   2 decoder, which stock FFmpeg lacks: the releases carry one next to Vice
   Lens ([vice-lens-ffmpeg](https://github.com/Librett0/vice-lens-ffmpeg)),
   with the fix the phone-shaped clips (720×1280) need
-  ([docs/formats.md](docs/formats.md#movies-moviesrpf)). Vice Lens looks
-  for `ffmpeg` next to itself, then on the PATH; Setup can name another,
-  which needs the `bink2video` decoder and the `binka` demuxer.
+  ([docs/formats.md](docs/formats.md#movies-moviesrpf)). Of the one Setup
+  names, the one next to Vice Lens and `ffmpeg` on the PATH, it uses the
+  first that has the `bink2video` decoder. A movie converts to MP4 (H.264)
+  where the window plays it, else to WebM (VP9, Opus): on Linux the window
+  plays video through GStreamer, which has no H.264 decoder without
+  `gst-libav` (left out by a fresh Arch or CachyOS), while VP9 and Opus
+  come with its good and base plugins.
 - **Sound**: the sound banks of `audio.rpf`; effects and speech play straight
   from the data (Opus, wrapped in Ogg without re-encoding) and save as
   `.opus`. Music banks are listed but do not play yet.

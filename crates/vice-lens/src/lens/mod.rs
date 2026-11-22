@@ -156,7 +156,7 @@ struct Lens {
     movies: OnceLock<Arc<Vec<media::Movie>>>,
     banks: OnceLock<Arc<Vec<audio::Bank>>>,
     /// The FFmpeg found, and whether it decodes Bink 2.
-    ffmpeg: Mutex<Option<(Option<PathBuf>, bool)>>,
+    ffmpeg: Mutex<Option<media::Ffmpeg>>,
 }
 
 fn cache() -> PathBuf {
@@ -228,7 +228,7 @@ impl Lens {
             (_, "/api/textures") => self.textures_list(r),
             (_, "/api/texdict") => self.texdict(r),
             (_, "/api/texture") => self.texture(r),
-            (_, "/api/movies") => self.movies_list(),
+            (_, "/api/movies") => self.movies_list(r),
             ("POST", "/api/movie/prepare") => self.movie_prepare(r),
             (_, "/api/movie/poster") => self.movie_poster(r),
             (_, "/api/movie/frame") => self.movie_frame(r),

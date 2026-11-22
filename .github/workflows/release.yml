@@ -11,7 +11,7 @@ on:
 permissions:
   contents: write
 env:
-  FFMPEG: vl-1
+  FFMPEG: vl-2
 jobs:
   build:
     strategy:

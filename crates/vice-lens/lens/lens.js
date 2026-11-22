@@ -3322,12 +3322,24 @@ function openImage(src, title, meta) {
 
 // ---------------------------------------------------------------- video
 
+// What the movies are converted to: MP4 (H.264, AAC) where this web view
+// plays it, else WebM (VP9, Opus). WebKitGTK plays H.264 and AAC only with
+// GStreamer's libav plugin, which a fresh Arch or CachyOS leaves out; VP9
+// and Opus come with its base and good plugins. Null: neither plays.
+const MOVIE_FORMAT = (() => {
+  const v = document.createElement('video');
+  if (v.canPlayType('video/mp4; codecs="avc1.64001f, mp4a.40.2"')) return 'mp4';
+  if (v.canPlayType('video/webm; codecs="vp9, opus"')) return 'webm';
+  return null;
+})();
+const NO_PLAYBACK = 'This window plays no H.264 and no VP9 video. On Linux it plays video through GStreamer: install its good and libav plugins (Arch, CachyOS: gst-plugins-good gst-libav; Debian, Ubuntu: gstreamer1.0-plugins-good gstreamer1.0-libav; Fedora: gstreamer1-plugins-good gstreamer1-plugin-openh264) and restart Vice Lens, or open Vice Lens in your browser with the button in the top bar.';
+
 // The movies, once listed; `list` is the side panel's filtered order, which
 // the player's next and previous follow.
 const VIDEO = {
   all: null, list: null, bink2: false,
   async load() {
-    if (!this.all) { const r = await api('/api/movies'); this.all = r.items; this.bink2 = r.bink2; }
+    if (!this.all) { const r = await api('/api/movies', { f: MOVIE_FORMAT || 'mp4' }); this.all = r.items; this.bink2 = r.bink2; }
     return this.all;
   },
   order() { return this.list || this.all || []; },
@@ -3364,7 +3376,8 @@ function openMovie(m, replace) {
   const prevBtn = h('button', { class: 'btn icon-only', title: 'Previous movie (P)', onclick: () => nav(-1) }, icon('prev'));
   const nextBtn = h('button', { class: 'btn icon-only', title: 'Next movie (N)', onclick: () => nav(1) }, icon('next'));
   const saveFrame = h('button', { class: 'btn', disabled: true, title: 'Save the frame shown, at the movie\'s full size (S)' }, icon('image'), 'Frame');
-  const saveMp4 = h('button', { class: 'btn', disabled: true, title: 'Save the MP4 Vice Lens made (picture at most 1280 wide, with the sound track chosen)' }, icon('save'), 'MP4');
+  const kind = MOVIE_FORMAT === 'webm' ? 'WebM' : 'MP4';
+  const saveMp4 = h('button', { class: 'btn', disabled: true, title: `Save the ${kind} Vice Lens made (picture at most 1280 wide, with the sound track chosen)` }, icon('save'), kind);
   const saveBk2 = h('button', { class: 'btn', title: 'Save the movie as the game stores it (Bink 2)', onclick: () => saveAs(`/api/movie/raw?o=${m.o}`, `movie-${m.k}.bk2`) }, icon('save'), '.bk2');
   const view = h('div', { class: 'page' }, h('div', { class: 'toolbar' }, prevBtn, nextBtn, h('span', { class: 'title', title: `${m.w}×${m.h} · ${fmtT(m.seconds)} · ${m.fps} fps`, text: `Movie #${m.k}` }),
     h('span', { class: 'grow' }), status, pick, speed, loopBtn, h('span', { class: 'sep' }), saveFrame, saveMp4, saveBk2), stage);
@@ -3394,6 +3407,13 @@ function openMovie(m, replace) {
     v.loop = loop;
     v.playbackRate = +speed.value;
     v.addEventListener('volumechange', () => { store.set('video.volume', v.volume); store.set('video.muted', v.muted); });
+    // The file is made but this window may still not play it (a decoder
+    // its web engine lacks): say so rather than show a dead player.
+    v.addEventListener('error', () => {
+      const why = { 1: 'stopped', 2: 'a network error', 3: 'it does not decode', 4: 'its format is not supported' }[v.error?.code] || 'an error';
+      status.textContent = `this window cannot play the ${kind} Vice Lens made (${why})`;
+      toast(NO_PLAYBACK);
+    });
     v.addEventListener('loadedmetadata', () => { if (at) v.currentTime = at; if (resume) v.play().catch(() => say('Space plays')); }, { once: true });
     if (video) video.replaceWith(v); else { still.remove(); cover.remove(); stage.prepend(v); }
     video = v;
@@ -3406,11 +3426,12 @@ function openMovie(m, replace) {
   };
   const prepare = async () => {
     if (pick) pick.disabled = true;
-    const r = await api('/api/movie/prepare', { o: m.o, t: track() }, { method: 'POST' }).catch((e) => ({ error: e.message }));
+    if (!MOVIE_FORMAT) { fail(NO_PLAYBACK); return; }
+    const r = await api('/api/movie/prepare', { o: m.o, t: track(), f: MOVIE_FORMAT }, { method: 'POST' }).catch((e) => ({ error: e.message }));
     if (r.ready) { play(r); return; }
     if (r.error) { if (video) { status.textContent = r.error; if (pick) pick.disabled = false; } else fail(r.error); return; }
     if (video) status.textContent = 'Adding that sound track…';
-    else { what.textContent = 'Converting to MP4 (only the first time)…'; sub.textContent = 'Starting…'; }
+    else { what.textContent = `Converting to ${kind} (only the first time)…`; sub.textContent = 'Starting…'; }
   };
   const onJobs = (ev) => {
     const j = ev.detail.find((x) => x.what === `Converting movie ${m.o}`);
@@ -3425,7 +3446,7 @@ function openMovie(m, replace) {
   pick?.addEventListener('change', prepare);
   speed.addEventListener('change', () => { if (video) video.playbackRate = +speed.value; });
   loopBtn.addEventListener('click', () => { loop = !loop; store.set('video.loop', loop); loopBtn.classList.toggle('on', loop); if (video) video.loop = loop; say(loop ? 'Loop on' : 'Loop off'); });
-  saveMp4.addEventListener('click', () => url && saveAs(url, `movie-${m.k}${tracks.length > 1 ? `-track${track() + 1}` : ''}.mp4`));
+  saveMp4.addEventListener('click', () => url && saveAs(url, `movie-${m.k}${tracks.length > 1 ? `-track${track() + 1}` : ''}.${kind.toLowerCase()}`));
   saveFrame.addEventListener('click', () => { if (!video) return; const t = video.currentTime; saveAs(`/api/movie/frame?o=${m.o}&t=${t.toFixed(3)}`, `movie-${m.k}-${fmtT(t).replace(':', 'm')}s.png`); });
   stage.addEventListener('dblclick', () => toggleFull());
   const toggleFull = () => {
@@ -3649,7 +3670,8 @@ async function openSetup() {
     h('div', { class: 'inline' }, input, browse('game'), h('button', { class: 'btn primary', onclick: save }, 'Save')),
     note,
     h('h3', { text: 'Videos' }),
-    h('p', { text: 'The movies are Bink 2. Stock FFmpeg builds do not decode it; a build with the bink2video decoder does (for example one from the mobipeg project).' }),
+    h('p', { text: 'The movies are Bink 2, which stock FFmpeg builds do not decode. Vice Lens comes with an FFmpeg that does, next to it; to use another, choose one with the bink2video decoder.' }),
+    MOVIE_FORMAT ? null : h('div', { class: 'note bad', text: NO_PLAYBACK }),
     h('div', { class: 'inline' }, ff, browse('ffmpeg'), h('button', { class: 'btn primary', onclick: saveFf }, 'Save')),
     ffNote,
     st && !st.ok ? h('div', { class: 'note bad', text: 'levels.rpf is not in this folder.' }) : null,

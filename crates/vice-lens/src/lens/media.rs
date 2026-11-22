@@ -54,10 +54,75 @@ fn media_dir() -> PathBuf {
     d
 }
 
+/// The FFmpeg Vice Lens runs, what it was found to do, and whether it can
+/// make WebM (VP9 and Opus).
+#[derive(Clone, Default)]
+pub(super) struct Ffmpeg {
+    path: Option<PathBuf>,
+    bink2: bool,
+    webm: bool,
+}
+
+/// What a movie is converted to for the app's web view: MP4 (H.264, AAC)
+/// where it plays that, else WebM (VP9, Opus). WebKitGTK plays H.264 and
+/// AAC only with GStreamer's libav plugin (gst-libav), which a fresh Arch
+/// or CachyOS leaves out, while VP9 and Opus come with its base and good
+/// plugins. The page asks its web view and says which (`f=webm`).
+#[derive(Clone, Copy, PartialEq)]
+enum Format {
+    Mp4,
+    Webm,
+}
+
+impl Format {
+    fn of(r: &Request) -> Format {
+        if r.get("f") == Some("webm") { Format::Webm } else { Format::Mp4 }
+    }
+
+    /// The picture of the movie at `o`, or with sound track `t`: the WebM
+    /// names differ from the MP4 ones in their stem too, so the notes kept
+    /// beside them (`.err`, `.damaged`, `.silent`) do not mix.
+    fn file(self, o: u64, t: Option<usize>) -> String {
+        let (tag, ext) = match self {
+            Format::Mp4 => ("", "mp4"),
+            Format::Webm => ("-vp9", "webm"),
+        };
+        match t {
+            None => format!("movie-{o:x}{tag}.{ext}"),
+            Some(t) => format!("movie-{o:x}{tag}-a{t}.{ext}"),
+        }
+    }
+
+    fn ext(self) -> &'static str {
+        match self {
+            Format::Mp4 => "mp4",
+            Format::Webm => "webm",
+        }
+    }
+
+    /// The sound alone, beside the movie's file: its extension, and the
+    /// encoder's arguments.
+    fn sound(self) -> (&'static str, &'static [&'static str]) {
+        match self {
+            Format::Mp4 => ("m4a", &["-c:a", "aac", "-b:a", "192k"]),
+            Format::Webm => ("sound.webm", &["-c:a", "libopus", "-b:a", "160k"]),
+        }
+    }
+
+    /// The picture encoder's arguments: both about as fast (a 13-second
+    /// movie at 1280×720 in one to two seconds).
+    fn picture(self) -> &'static [&'static str] {
+        match self {
+            Format::Mp4 => &["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+            Format::Webm => &["-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8", "-row-mt", "1", "-b:v", "0", "-crf", "32", "-pix_fmt", "yuv420p"],
+        }
+    }
+}
+
 /// The file a movie plays from: with sound track `t`, or the picture alone
 /// when it has no sound.
-fn movie_file(m: &Movie, t: usize) -> String {
-    if m.tracks.is_empty() { format!("movie-{:x}.mp4", m.offset) } else { format!("movie-{:x}-a{t}.mp4", m.offset) }
+fn movie_file(m: &Movie, t: usize, f: Format) -> String {
+    f.file(m.offset, (!m.tracks.is_empty()).then_some(t))
 }
 
 fn media_url(p: &std::path::Path) -> String {
@@ -91,22 +156,41 @@ impl Lens {
 
     // --- settings ---
 
-    /// The FFmpeg Vice Lens uses: the one chosen in Setup, else the one its
-    /// releases carry next to it (with a Bink 2 decoder), else `ffmpeg` on
-    /// the PATH; and whether it decodes Bink 2 (stock builds do not).
+    /// The FFmpeg Vice Lens uses, and whether it decodes Bink 2 (stock
+    /// builds do not): of the one chosen in Setup, the one its releases
+    /// carry next to it and `ffmpeg` on the PATH, the first that decodes
+    /// Bink 2, else the first there is. A stock FFmpeg chosen in Setup
+    /// before the releases carried one does not hide the one beside.
     pub(super) fn ffmpeg(&self) -> (Option<PathBuf>, bool) {
+        let f = self.ffmpeg_found();
+        (f.path, f.bink2)
+    }
+
+    fn ffmpeg_found(&self) -> Ffmpeg {
         let mut cached = self.ffmpeg.lock().unwrap();
         if let Some(c) = cached.as_ref() {
             return c.clone();
         }
         let name = format!("ffmpeg{}", std::env::consts::EXE_SUFFIX);
-        let chosen = std::fs::read_to_string(config("ffmpeg")).ok().map(|s| PathBuf::from(s.trim())).filter(|p| p.exists());
-        let beside = || std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(&name))).filter(|p| p.exists());
-        let on_path = || std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(&name)).find(|f| f.exists()));
-        let path = chosen.or_else(beside).or_else(on_path);
-        let bink2 = path.as_ref().is_some_and(|p| std::process::Command::new(p).args(["-hide_banner", "-decoders"]).output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("bink2video")));
-        *cached = Some((path.clone(), bink2));
-        (path, bink2)
+        let chosen = std::fs::read_to_string(config("ffmpeg")).ok().map(|s| PathBuf::from(s.trim()));
+        let beside = std::env::current_exe().ok().and_then(|e| Some(e.parent()?.join(&name)));
+        let on_path = std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(&name)).find(|f| f.exists()));
+        let mut there: Vec<PathBuf> = Vec::new();
+        for p in [chosen, beside, on_path].into_iter().flatten() {
+            if p.exists() && !there.contains(&p) {
+                there.push(p);
+            }
+        }
+        let lists = |p: &PathBuf, what: &str| std::process::Command::new(p).args(["-hide_banner", what]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let path = there.iter().find(|p| lists(p, "-decoders").contains("bink2video")).or(there.first()).cloned();
+        let bink2 = path.as_ref().is_some_and(|p| lists(p, "-decoders").contains("bink2video"));
+        let webm = path.as_ref().is_some_and(|p| {
+            let e = lists(p, "-encoders");
+            e.contains("libvpx-vp9") && e.contains("libopus")
+        });
+        let f = Ffmpeg { path, bink2, webm };
+        *cached = Some(f.clone());
+        f
     }
 
     pub(super) fn settings(&self, r: &Request) -> Reply {
@@ -269,14 +353,15 @@ impl Lens {
             .clone()
     }
 
-    pub(super) fn movies_list(&self) -> Reply {
+    pub(super) fn movies_list(&self, r: &Request) -> Reply {
         let (path, bink2) = self.ffmpeg();
+        let f = Format::of(r);
         let items: Vec<String> = self
             .movies()
             .iter()
             .enumerate()
             .map(|(k, m)| {
-                let ready = media_dir().join(movie_file(m, 0)).exists();
+                let ready = media_dir().join(movie_file(m, 0, f)).exists();
                 let tracks: Vec<String> = m.tracks.iter().map(|t| t.id.to_string()).collect();
                 format!(
                     "{{\"k\":{k},\"o\":\"{:#x}\",\"bytes\":{},\"frames\":{},\"w\":{},\"h\":{},\"fps\":{},\"seconds\":{:.2},\"audio\":{},\"tracks\":[{}],\"ready\":{ready}}}",
@@ -295,19 +380,21 @@ impl Lens {
         Reply::json(format!("{{\"ffmpeg\":{},\"bink2\":{bink2},\"items\":[{}]}}", path.map_or("null".into(), |p| quote(&p.to_string_lossy())), items.join(",")))
     }
 
-    /// Make a movie playable in the background: its picture as MP4 (H.264,
-    /// at most 1280 wide) once, then for the chosen sound track (`t`, the
-    /// first by default) that picture with the track as AAC, joined
-    /// without re-encoding, so switching tracks takes seconds. The media
-    /// URL serves the result once done.
+    /// Make a movie playable in the background: its picture (at most 1280
+    /// wide) as MP4, or as WebM for a web view that plays no H.264 (`f`),
+    /// once, then for the chosen sound track (`t`, the first by default)
+    /// that picture with the track (AAC, or Opus), joined without
+    /// re-encoding, so switching tracks takes seconds. The media URL serves
+    /// the result once done.
     pub(super) fn movie_prepare(self: &Arc<Self>, r: &Request) -> Reply {
         let Some(o) = r.hex("o") else { return Reply::bad("o") };
         let Some(m) = self.movies().iter().find(|m| m.offset == o).map(|m| (m.bytes, m.frames, m.tracks.len())) else { return Reply::missing("no movie there") };
         let t = r.num::<usize>("t").unwrap_or(0).min(m.2.saturating_sub(1));
-        let video = media_dir().join(format!("movie-{o:x}.mp4"));
-        let out = if m.2 == 0 { video.clone() } else { media_dir().join(format!("movie-{o:x}-a{t}.mp4")) };
+        let fmt = Format::of(r);
+        let video = media_dir().join(fmt.file(o, None));
+        let out = if m.2 == 0 { video.clone() } else { media_dir().join(fmt.file(o, Some(t))) };
         // When the picture does not decode, the sound alone.
-        let sound_only = out.with_extension("m4a");
+        let sound_only = out.with_extension(fmt.sound().0);
         let failed = out.with_extension("err");
         let picture_failed = std::fs::read_to_string(video.with_extension("err")).ok().map(|w| format!("the picture does not decode ({})", w.trim()));
         let damaged = std::fs::read_to_string(video.with_extension("damaged")).ok();
@@ -327,7 +414,11 @@ impl Lens {
             (None, Some(s)) if video.exists() => return ready(&video, false, true, Some(s)),
             _ => {}
         }
-        let (Some(ffmpeg), true) = self.ffmpeg() else { return Reply::json(format!("{{\"ready\":false,\"error\":{}}}", quote("needs an FFmpeg that decodes Bink 2 (see Setup)"))) };
+        let found = self.ffmpeg_found();
+        let (Some(ffmpeg), true) = (found.path, found.bink2) else { return Reply::json(format!("{{\"ready\":false,\"error\":{}}}", quote("needs an FFmpeg that decodes Bink 2 (see Setup)"))) };
+        if fmt == Format::Webm && !found.webm {
+            return Reply::json(format!("{{\"ready\":false,\"error\":{}}}", quote("this window plays no H.264, and this FFmpeg makes no WebM (it needs libvpx and libopus): use the FFmpeg Vice Lens comes with, or open Vice Lens in your browser")));
+        }
         let what = format!("Converting movie {o:#x}");
         {
             let mut j = self.jobs.lock().unwrap();
@@ -340,10 +431,10 @@ impl Lens {
         let (game, this) = (self.game.join("movies.rpf"), self.clone());
         std::thread::spawn(move || {
             let input = format!("subfile,,start,{o},end,{},,:{}", o + m.0, game.display());
-            let picture = video.exists() || (picture_failed.is_none() && this.movie_picture(&ffmpeg, &input, &video, &what, m.1 as u64));
+            let picture = video.exists() || (picture_failed.is_none() && this.movie_picture(&ffmpeg, &input, &video, &what, m.1 as u64, fmt));
             if m.2 > 0 {
                 let (pic, target) = if picture { (Some(video.as_path()), &out) } else { (None, &sound_only) };
-                if let Err(why) = this.movie_sound(&ffmpeg, o, m.0, t, pic, target) {
+                if let Err(why) = this.movie_sound(&ffmpeg, o, m.0, t, pic, target, fmt) {
                     log::warn!("lens: movie {o:#x} track {t}: {why}");
                     let _ = std::fs::write(&failed, why);
                 }
@@ -356,17 +447,19 @@ impl Lens {
         Reply::json("{\"ready\":false,\"started\":true}".into())
     }
 
-    /// The picture of a movie as MP4, with progress in the job `what`; on
+    /// The picture of a movie as MP4 or WebM, with progress in the job `what`; on
     /// failure, FFmpeg's last complaint is kept beside it (`.err`). FFmpeg
     /// drops frames its Bink 2 decoder cannot read and carries on while
     /// fewer than two in three fail; a picture short of frames is marked
     /// `.damaged`, since what does decode of such a movie is damaged too.
-    fn movie_picture(&self, ffmpeg: &std::path::Path, input: &str, video: &std::path::Path, what: &str, frames: u64) -> bool {
-        let part = video.with_extension("part.mp4");
+    fn movie_picture(&self, ffmpeg: &std::path::Path, input: &str, video: &std::path::Path, what: &str, frames: u64, fmt: Format) -> bool {
+        let part = video.with_extension(format!("part.{}", fmt.ext()));
         let log = video.with_extension("log");
         let child = std::process::Command::new(ffmpeg)
             .args(["-v", "error", "-nostdin", "-protocol_whitelist", "file,subfile", "-i", input, "-map", "0:v:0", "-an"])
-            .args(["-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-progress", "pipe:1", "-y"])
+            .args(["-vf", "scale='min(1280,iw)':-2"])
+            .args(fmt.picture())
+            .args(["-progress", "pipe:1", "-y"])
             .arg(&part)
             .stdout(std::process::Stdio::piped())
             .stderr(std::fs::File::create(&log).map_or(std::process::Stdio::null(), std::process::Stdio::from))
@@ -404,17 +497,19 @@ impl Lens {
         }
     }
 
-    /// Sound track `t` of the movie at `o` (`bytes` long) as AAC, joined
-    /// with its picture into `out`, or alone without one. A track that
-    /// holds only silence (some movies carry one) is marked beside it, so
-    /// the app can say so.
-    fn movie_sound(&self, ffmpeg: &std::path::Path, o: u64, bytes: u64, t: usize, video: Option<&std::path::Path>, out: &std::path::Path) -> Result<(), String> {
+    /// Sound track `t` of the movie at `o` (`bytes` long) as AAC (Opus for
+    /// WebM), joined with its picture into `out`, or alone without one. A
+    /// track that holds only silence (some movies carry one) is marked
+    /// beside it, so the app can say so.
+    #[allow(clippy::too_many_arguments)]
+    fn movie_sound(&self, ffmpeg: &std::path::Path, o: u64, bytes: u64, t: usize, video: Option<&std::path::Path>, out: &std::path::Path, fmt: Format) -> Result<(), String> {
         let a = self.archive("movies.rpf").ok_or("no movies.rpf")?;
         let b = a.bytes().get(o as usize..(o + bytes) as usize).ok_or("the movie lies past the archive's end")?;
         let stream = super::bink::ueba(b, t).ok_or("its sound track does not read")?;
         let ueba = out.with_extension("ueba");
-        let aac = out.with_extension("aac.m4a");
-        let part = out.with_extension(if video.is_some() { "part.mp4" } else { "part.m4a" });
+        let (sound_ext, sound_codec) = fmt.sound();
+        let track = out.with_extension(format!("track.{sound_ext}"));
+        let part = out.with_extension(format!("part.{}", if video.is_some() { fmt.ext() } else { sound_ext }));
         std::fs::write(&ueba, stream).map_err(|e| e.to_string())?;
         let run = |args: &[&std::ffi::OsStr]| {
             std::process::Command::new(ffmpeg).args(["-v", "error", "-nostdin", "-y"]).args(args).output().map_err(|e| e.to_string()).and_then(|o| {
@@ -424,32 +519,28 @@ impl Lens {
         };
         let s = |v: &str| std::ffi::OsString::from(v);
         // volumedetect reports the peak at the info level.
-        let r = run(&[&s("-v"), &s("info"), &s("-f"), &s("binka"), &s("-i"), ueba.as_os_str(), &s("-af"), &s("volumedetect"), &s("-c:a"), &s("aac"), &s("-b:a"), &s("192k"), aac.as_os_str()])
+        let mut decode = vec![s("-v"), s("info"), s("-f"), s("binka"), s("-i"), ueba.clone().into_os_string(), s("-af"), s("volumedetect")];
+        decode.extend(sound_codec.iter().map(|v| s(v)));
+        decode.push(track.clone().into_os_string());
+        let decode: Vec<&std::ffi::OsStr> = decode.iter().map(|v| v.as_os_str()).collect();
+        let r = run(&decode)
             .map_err(|e| format!("the sound does not decode ({e}); it needs an FFmpeg that reads Bink Audio 2 (UEBA)"))
             .and_then(|log| {
                 let peak = log.lines().find_map(|l| l.split("max_volume:").nth(1)).map(|v| v.trim().trim_end_matches("dB").trim().parse::<f32>().unwrap_or(f32::NEG_INFINITY));
                 if peak.is_some_and(|db| db <= -90.0) {
                     let _ = std::fs::write(out.with_extension("silent"), "");
                 }
-                let Some(video) = video else { return std::fs::rename(&aac, &part).map(|_| String::new()).map_err(|e| e.to_string()) };
-                run(&[
-                    &s("-i"),
-                    video.as_os_str(),
-                    &s("-i"),
-                    aac.as_os_str(),
-                    &s("-map"),
-                    &s("0:v:0"),
-                    &s("-map"),
-                    &s("1:a:0"),
-                    &s("-c"),
-                    &s("copy"),
-                    &s("-movflags"),
-                    &s("+faststart"),
-                    part.as_os_str(),
-                ])
+                let Some(video) = video else { return std::fs::rename(&track, &part).map(|_| String::new()).map_err(|e| e.to_string()) };
+                let mut join = vec![s("-i"), video.as_os_str().to_os_string(), s("-i"), track.clone().into_os_string(), s("-map"), s("0:v:0"), s("-map"), s("1:a:0"), s("-c"), s("copy")];
+                if fmt == Format::Mp4 {
+                    join.extend([s("-movflags"), s("+faststart")]);
+                }
+                join.push(part.clone().into_os_string());
+                let join: Vec<&std::ffi::OsStr> = join.iter().map(|v| v.as_os_str()).collect();
+                run(&join)
             })
             .and_then(|_| std::fs::rename(&part, out).map_err(|e| e.to_string()));
-        for f in [&ueba, &aac, &part] {
+        for f in [&ueba, &track, &part] {
             let _ = std::fs::remove_file(f);
         }
         r
@@ -516,6 +607,8 @@ impl Lens {
         let len = file.metadata().map_or(0, |m| m.len());
         let ctype = if f.ends_with(".mp4") {
             "video/mp4"
+        } else if f.ends_with(".webm") {
+            "video/webm"
         } else if f.ends_with(".m4a") {
             "audio/mp4"
         } else if f.ends_with(".png") {
