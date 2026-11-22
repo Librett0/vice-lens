@@ -1,0 +1,114 @@
+# Tests a release on a real Windows machine, without any game files: the
+# FFmpeg it carries decodes a Bink 2 movie it makes itself, read the way
+# Vice Lens reads movies (a stretch of a bigger file, through FFmpeg's
+# subfile protocol, from a path with spaces), into the MP4 and WebM Vice
+# Lens makes; vice-lens.exe serves its API and finds that FFmpeg beside
+# itself; and its window opens (a screenshot is kept with the run).
+name: smoke-windows
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to test
+        required: true
+        default: v0.1.2
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ROOT: 'C:\Vice Lens Test'
+    steps:
+      - name: Download the release
+        run: |
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p vice-lens-windows-x86_64.zip -D $env:RUNNER_TEMP
+          Expand-Archive "$env:RUNNER_TEMP\vice-lens-windows-x86_64.zip" $env:ROOT
+          Get-ChildItem "$env:ROOT\vice-lens-windows-x86_64" | Format-Table Name, Length
+
+      - name: FFmpeg reads Bink 2 and makes MP4 and WebM
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $app = "$env:ROOT\vice-lens-windows-x86_64"
+          $ff = "$app\ffmpeg.exe"
+          $game = "$env:ROOT\game files"
+          New-Item -ItemType Directory $game | Out-Null
+          function Check($ok, $what) { if (-not $ok) { throw "FAILED: $what" }; "ok: $what" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY }
+          foreach ($f in 'FFMPEG-LICENSE.txt', 'FFMPEG-SOURCE.txt') { Check (Test-Path "$app\$f") "$f is in the archive" }
+          Check ((& $ff -hide_banner -decoders) -match 'bink2video') 'ffmpeg.exe has the Bink 2 decoder'
+          $enc = & $ff -hide_banner -encoders
+          foreach ($e in 'libx264', 'libvpx-vp9', 'libopus', 'aac', 'bink2video') { Check ($enc -match " $e ") "ffmpeg.exe has the $e encoder" }
+
+          # A Bink 2 movie, 90 frames, inside a bigger file at 8 KiB, as the
+          # game's movies sit in movies.rpf.
+          & $ff -v error -f lavfi -i 'testsrc2=size=1280x720:rate=30' -t 3 -c:v bink2video -y "$game\test.bk2"
+          $bk2 = [IO.File]::ReadAllBytes("$game\test.bk2")
+          $rpf = [IO.File]::Create("$game\movies.rpf")
+          $rpf.Write([byte[]]::new(8192), 0, 8192)
+          $rpf.Write($bk2, 0, $bk2.Length)
+          $rpf.Close()
+          $in = "subfile,,start,8192,end,$(8192 + $bk2.Length),,:$game\movies.rpf"
+          $frames = { param($file) @(& $ff -v error -i $file -map 0:v:0 -f framemd5 - | Where-Object { $_ -notmatch '^#' }).Count }
+
+          # The picture, as Vice Lens converts it (crates/vice-lens/src/lens/media.rs).
+          & $ff -v error -nostdin -protocol_whitelist file,subfile -i $in -map 0:v:0 -an -vf "scale='min(1280,iw)':-2" -c:v libx264 -preset veryfast -crf 22 -pix_fmt yuv420p -movflags +faststart -progress "$env:RUNNER_TEMP\progress.txt" -y "$game\movie.mp4"
+          Check ((& $frames "$game\movie.mp4") -eq 90) 'Bink 2 to MP4 (H.264): 90 of 90 frames'
+          & $ff -v error -nostdin -protocol_whitelist file,subfile -i $in -map 0:v:0 -an -vf "scale='min(1280,iw)':-2" -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -row-mt 1 -b:v 0 -crf 32 -pix_fmt yuv420p -y "$game\movie-vp9.webm"
+          Check ((& $frames "$game\movie-vp9.webm") -eq 90) 'Bink 2 to WebM (VP9): 90 of 90 frames'
+
+          # A sound track, and the picture joined with it without re-encoding.
+          & $ff -v error -f lavfi -i 'sine=frequency=440:sample_rate=48000:duration=3' -c:a aac -b:a 192k -y "$game\track.m4a"
+          & $ff -v error -f lavfi -i 'sine=frequency=440:sample_rate=48000:duration=3' -c:a libopus -b:a 160k -y "$game\track.webm"
+          & $ff -v error -i "$game\movie.mp4" -i "$game\track.m4a" -map 0:v:0 -map 1:a:0 -c copy -movflags +faststart -y "$game\movie-a0.mp4"
+          & $ff -v error -i "$game\movie-vp9.webm" -i "$game\track.webm" -map 0:v:0 -map 1:a:0 -c copy -y "$game\movie-vp9-a0.webm"
+          foreach ($f in 'movie-a0.mp4', 'movie-vp9-a0.webm') {
+            $info = (& $ff -hide_banner -i "$game\$f" 2>&1) -join "`n"
+            Check ($info -match 'Video:' -and $info -match 'Audio:') "$f holds a picture and a sound track"
+          }
+
+      - name: vice-lens.exe serves and finds its FFmpeg
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = "$env:ROOT\vice-lens-windows-x86_64"
+          function Check($ok, $what) { if (-not $ok) { throw "FAILED: $what" }; "ok: $what" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY }
+          $p = Start-Process -FilePath "$app\vice-lens.exe" -ArgumentList '--serve', '--port', '37400' -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\serve.out" -RedirectStandardError "$env:RUNNER_TEMP\serve.err"
+          $status = $null
+          foreach ($k in 1..30) { try { $status = Invoke-RestMethod http://127.0.0.1:37400/api/status; break } catch { Start-Sleep 1 } }
+          Check ($null -ne $status) 'vice-lens.exe --serve answers'
+          Check ($status.version -eq '${{ inputs.tag }}'.TrimStart('v')) "it reports version $($status.version)"
+          $s = Invoke-RestMethod http://127.0.0.1:37400/api/settings
+          Check ($s.ffmpeg -eq "$app\ffmpeg.exe") "it uses the FFmpeg beside it ($($s.ffmpeg))"
+          Check ($s.bink2 -eq $true) 'that FFmpeg decodes Bink 2'
+          Stop-Process -Id $p.Id
+
+      - name: The window opens
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = "$env:ROOT\vice-lens-windows-x86_64"
+          function Check($ok, $what) { if (-not $ok) { throw "FAILED: $what" }; "ok: $what" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY }
+          $p = Start-Process -FilePath "$app\vice-lens.exe" -ArgumentList "--game `"$env:ROOT\game files`"" -PassThru -RedirectStandardOutput "$env:RUNNER_TEMP\app.out" -RedirectStandardError "$env:RUNNER_TEMP\app.err"
+          Start-Sleep 20
+          $p.Refresh()
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$env:RUNNER_TEMP\window.png")
+          Check (-not $p.HasExited) "the app is still running after 20 s (window: '$($p.MainWindowTitle)')"
+          Stop-Process -Id $p.Id
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-windows
+          path: |
+            ${{ runner.temp }}/window.png
+            ${{ runner.temp }}/serve.out
+            ${{ runner.temp }}/serve.err
+            ${{ runner.temp }}/app.out
+            ${{ runner.temp }}/app.err
