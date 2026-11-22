@@ -1,0 +1,15 @@
+[package]
+name = "rage"
+description = "Readers for the game's data formats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2 = "1.1.11"
+memmap2 = "0.9.12"
+thiserror = "2.0.21"
+
+[dev-dependencies]
+texture2ddecoder = "0.1.2"
+tiny-skia = "0.12.0"

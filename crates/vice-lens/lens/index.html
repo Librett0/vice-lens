@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vice Lens</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='14' cy='14' r='9' fill='none' stroke='%234fe0c4' stroke-width='4'/%3E%3Cpath d='M21 21l7 7' stroke='%23ff6fb1' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/lens.css">
+</head>
+<body>
+<div id="app">
+  <header id="top">
+    <div class="brand"><span class="lens"></span>Vice Lens <small id="version"></small></div>
+    <div id="search-open" title="Search models, text, coordinates (Ctrl K)"></div>
+    <div class="top-right">
+      <span id="game-pill" class="pill" title="Game folder"><span class="dot"></span><span>…</span></span>
+      <button class="icon-btn" id="toggle-insp" title="Inspector (I)"></button>
+    </div>
+  </header>
+  <nav id="act"></nav>
+  <aside id="side"><div class="side-head"><span id="side-title"></span><span id="side-extra"></span></div><div class="side-body" id="side-body"></div><div class="resizer" data-for="side"></div></aside>
+  <main id="main"><div id="tabbar"><div id="tabs"></div><button id="tabs-all" title="All open tabs"></button></div><div id="views"></div></main>
+  <aside id="insp"><div class="side-head"><span>Inspector</span></div><div id="insp-preview"></div><div class="side-body" id="insp-body"></div><div class="resizer" data-for="insp"></div></aside>
+  <footer id="status"></footer>
+</div>
+<script type="module" src="/lens.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+/target
+/captures
+# Written at run time by a library the app loads, in the working directory.
+/.sentry-native

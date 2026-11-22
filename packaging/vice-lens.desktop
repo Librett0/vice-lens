@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Vice Lens
+GenericName=Game data explorer
+Comment=Explore the map, models, textures, movies, sound and text of your copy of the game
+Exec=vice-lens
+Icon=vice-lens
+Categories=Development;Utility;
+Terminal=false

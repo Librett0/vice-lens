@@ -1,0 +1,9 @@
+[package]
+name = "fwui"
+description = "Reads the game's UI data and lays it out: elements, styles, flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rage = { path = "../rage" }
