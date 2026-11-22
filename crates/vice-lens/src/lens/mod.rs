@@ -295,12 +295,13 @@ impl Lens {
             .collect();
         let ok = self.game.join("levels.rpf").exists();
         Reply::json(format!(
-            "{{\"game\":{},\"ok\":{ok},\"cache\":{},\"archives\":[{}],\"caches\":[{}],\"version\":{}}}",
+            "{{\"game\":{},\"ok\":{ok},\"cache\":{},\"archives\":[{}],\"caches\":[{}],\"version\":{},\"os\":\"{}\"}}",
             quote(&self.game.to_string_lossy()),
             quote(&cache().to_string_lossy()),
             archives.join(","),
             caches.join(","),
-            quote(env!("CARGO_PKG_VERSION"))
+            quote(env!("CARGO_PKG_VERSION")),
+            std::env::consts::OS
         ))
     }
 

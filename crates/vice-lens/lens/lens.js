@@ -3649,7 +3649,9 @@ async function openSetup() {
   const ff = h('input', { class: 'text plain', placeholder: 'ffmpeg (next to Vice Lens, else from the PATH)', spellcheck: 'false' });
   const ffNote = h('div');
   const ffShow = (r) => ffNote.replaceChildren(h('div', { class: 'note ' + (r.bink2 ? 'ok' : 'bad'), text: r.bink2 ? `Plays Bink 2: ${r.ffmpeg}` : r.ffmpeg ? `${r.ffmpeg} does not decode Bink 2; movies will not play.` : 'No FFmpeg found; movies will not play.' }));
-  // How the app window draws (Linux only: WebKitGTK's GPU or shared-memory path).
+  // How the app window draws (Linux only: WebKitGTK's GPU or shared-memory
+  // path; WebView2 on Windows has no such choice).
+  const webkit = window.ipc && st?.os === 'linux';
   const drawSeg = h('div', { class: 'seg' });
   const drawNote = h('div', { class: 'faint', style: 'margin-top:8px' });
   const drawShow = (r) => {
@@ -3675,9 +3677,9 @@ async function openSetup() {
     h('div', { class: 'inline' }, ff, browse('ffmpeg'), h('button', { class: 'btn primary', onclick: saveFf }, 'Save')),
     ffNote,
     st && !st.ok ? h('div', { class: 'note bad', text: 'levels.rpf is not in this folder.' }) : null,
-    window.ipc ? h('h3', { text: 'Drawing' }) : null,
-    window.ipc ? h('p', { text: 'How the window\'s web view (WebKitGTK) draws. Shared memory works everywhere. The GPU paces frames more evenly; if the window closes as it opens, Vice Lens goes back to shared memory by itself. Either way WebKitGTK may hold the page to 60 frames a second (it does on NVIDIA under Wayland); for the screen\'s full rate, open Vice Lens in your browser with the button in the top bar.' }) : null,
-    window.ipc ? h('div', {}, drawSeg, drawNote) : null,
+    webkit ? h('h3', { text: 'Drawing' }) : null,
+    webkit ? h('p', { text: 'How the window\'s web view (WebKitGTK) draws. Shared memory works everywhere. The GPU paces frames more evenly; if the window closes as it opens, Vice Lens goes back to shared memory by itself. Either way WebKitGTK may hold the page to 60 frames a second (it does on NVIDIA under Wayland); for the screen\'s full rate, open Vice Lens in your browser with the button in the top bar.' }) : null,
+    webkit ? h('div', {}, drawSeg, drawNote) : null,
     h('h3', { text: 'Archives' }),
     h('div', { class: 'card' }, h('table', { class: 'grid' }, h('tbody', {}, ...(st?.archives || []).map((a) => h('tr', {}, h('td', { text: a.name }), h('td', { class: 'num', text: fmtBytes(a.bytes) })))))),
     h('h3', { text: 'Caches' }),
